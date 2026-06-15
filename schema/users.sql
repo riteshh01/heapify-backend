@@ -65,7 +65,8 @@ CREATE TRIGGER users_set_updated_at
 CREATE INDEX IF NOT EXISTS idx_users_email ON users (email);
 
 -- ─── Migration: add new columns to an existing table ────────────────────────
--- ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar                  TEXT DEFAULT '';
+-- [APPLIED 2026-06-15] avatar column added to live DB
+ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar                  TEXT DEFAULT '';
 -- ALTER TABLE users ADD COLUMN IF NOT EXISTS role                    VARCHAR(10) NOT NULL DEFAULT 'user' CHECK (role IN ('user','admin'));
 -- ALTER TABLE users ADD COLUMN IF NOT EXISTS verify_otp              VARCHAR(255);
 -- ALTER TABLE users ADD COLUMN IF NOT EXISTS verify_otp_expire_at    TIMESTAMPTZ;
@@ -82,9 +83,9 @@ CREATE INDEX IF NOT EXISTS idx_users_email ON users (email);
 -- ─── Fix: convert OTP timing columns from BIGINT (epoch ms) → TIMESTAMPTZ ──
 -- Run these if your table was created with BIGINT for OTP columns.
 -- The USING clause converts epoch-milliseconds to a proper timestamp.
-ALTER TABLE users
-    ALTER COLUMN verify_otp_expire_at    TYPE TIMESTAMPTZ USING to_timestamp(verify_otp_expire_at    / 1000.0),
-    ALTER COLUMN verify_otp_last_sent_at TYPE TIMESTAMPTZ USING to_timestamp(verify_otp_last_sent_at / 1000.0),
-    ALTER COLUMN verify_otp_locked_until TYPE TIMESTAMPTZ USING to_timestamp(verify_otp_locked_until / 1000.0),
-    ALTER COLUMN reset_otp_expire_at     TYPE TIMESTAMPTZ USING to_timestamp(reset_otp_expire_at     / 1000.0);
+-- ALTER TABLE users
+--     ALTER COLUMN verify_otp_expire_at    TYPE TIMESTAMPTZ USING to_timestamp(verify_otp_expire_at    / 1000.0),
+--     ALTER COLUMN verify_otp_last_sent_at TYPE TIMESTAMPTZ USING to_timestamp(verify_otp_last_sent_at / 1000.0),
+--     ALTER COLUMN verify_otp_locked_until TYPE TIMESTAMPTZ USING to_timestamp(verify_otp_locked_until / 1000.0),
+--     ALTER COLUMN reset_otp_expire_at     TYPE TIMESTAMPTZ USING to_timestamp(reset_otp_expire_at     / 1000.0);
 -- ALTER TABLE users ADD COLUMN IF NOT EXISTS auth_provider           VARCHAR(10) NOT NULL DEFAULT 'local' CHECK (auth_provider IN ('local','google'));

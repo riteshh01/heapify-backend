@@ -12,6 +12,7 @@
 import jwt from "jsonwebtoken";
 import crypto from "crypto";
 import pool from "../config/db.js";
+import { attachCsrfCookie, clearCsrfCookie } from "./csrfService.js";
 
 // ─── Lifetimes ────────────────────────────────────────────────────────────────
 const ACCESS_TOKEN_EXPIRY_SECONDS  = 15 * 60;              // 15 minutes
@@ -79,9 +80,14 @@ export async function generateTokens(res, user, rememberMe = false) {
         [user.id, tokenHash, expiresAt]
     );
 
-    // 4. Set cookies — JS cannot read these
+    // 4. Set auth cookies — JS cannot read these (httpOnly)
     res.cookie("accessToken",  accessToken,    cookieOptions(ACCESS_TOKEN_EXPIRY_SECONDS));
     res.cookie("refreshToken", refreshTokenRaw, cookieOptions(refreshExpiry));
+
+    // 5. Set CSRF cookie — non-httpOnly so frontend JS can read and inject it
+    //    into the X-CSRF-Token header on every state-changing request.
+    //    Lifetime mirrors the refresh token so they expire together.
+    attachCsrfCookie(res, refreshExpiry);
 }
 
 /**
@@ -156,4 +162,7 @@ export function clearAuthCookies(res) {
     };
     res.clearCookie("accessToken",  opts);
     res.clearCookie("refreshToken", opts);
+
+    // Clear the CSRF cookie too — its options differ (httpOnly: false)
+    clearCsrfCookie(res);
 }
