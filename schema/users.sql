@@ -1,5 +1,10 @@
 -- PostgreSQL schema for the authentication app
 -- Run this once to create (or migrate) the users table
+--
+-- Live DB column notes:
+--   auth_method  = 'local' | 'google'   (live DB uses auth_method, not auth_provider)
+--   picture      = Google profile picture URL (set on OAuth signup)
+--   avatar       = user-uploaded avatar (separate field)
 
 CREATE TABLE IF NOT EXISTS users (
     id                      SERIAL          PRIMARY KEY,
@@ -9,10 +14,30 @@ CREATE TABLE IF NOT EXISTS users (
                                             CHECK (char_length(name) >= 3),
     email                   VARCHAR(255)    NOT NULL UNIQUE
                                             CHECK (email ~* '^[^@\s]+@[^@\s]+\.[^@\s]+$'),
-    password                VARCHAR(255),                        -- NULL for OAuth users
+
+    -- Password: NULL is allowed only for OAuth (Google) users.
+    -- Enforced by the DB-level constraint below: chk_password_required_for_local
+    password                VARCHAR(255),
+
+    -- Auth method
+    auth_method             VARCHAR(10)     NOT NULL DEFAULT 'local'
+                                            CHECK (auth_method IN ('local', 'google')),
+
+    -- ─── DB-level password enforcement ────────────────────────────────────
+    -- local  → password MUST be set (NOT NULL)
+    -- google → password may be NULL (user authenticated via OAuth, never set a password)
+    --          or non-NULL if the user later adds a local password
+    CONSTRAINT chk_password_required_for_local
+        CHECK (
+            (auth_method = 'local'  AND password IS NOT NULL) OR
+            (auth_method = 'google')
+        ),
+    -- ──────────────────────────────────────────────────────────────────────
 
     -- Profile
-    avatar                  TEXT            DEFAULT '',
+    avatar                  TEXT            DEFAULT '',   -- user-uploaded avatar
+    picture                 TEXT            DEFAULT '',   -- Google profile picture URL
+    google_id               VARCHAR(255)    UNIQUE,       -- NULL for local users
 
     -- Role-Based Access
     role                    VARCHAR(10)     NOT NULL DEFAULT 'user'
@@ -39,8 +64,6 @@ CREATE TABLE IF NOT EXISTS users (
 
     -- Optional Extra Fields
     phone                   VARCHAR(20)     DEFAULT '',
-    auth_provider           VARCHAR(10)     NOT NULL DEFAULT 'local'
-                                            CHECK (auth_provider IN ('local', 'google')),
 
     -- Timestamps  (equivalent to Mongoose { timestamps: true })
     created_at              TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
@@ -66,26 +89,36 @@ CREATE INDEX IF NOT EXISTS idx_users_email ON users (email);
 
 -- ─── Migration: add new columns to an existing table ────────────────────────
 -- [APPLIED 2026-06-15] avatar column added to live DB
-ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar                  TEXT DEFAULT '';
--- ALTER TABLE users ADD COLUMN IF NOT EXISTS role                    VARCHAR(10) NOT NULL DEFAULT 'user' CHECK (role IN ('user','admin'));
--- ALTER TABLE users ADD COLUMN IF NOT EXISTS verify_otp              VARCHAR(255);
--- ALTER TABLE users ADD COLUMN IF NOT EXISTS verify_otp_expire_at    TIMESTAMPTZ;
--- ALTER TABLE users ADD COLUMN IF NOT EXISTS verify_otp_attempts     INT NOT NULL DEFAULT 0;
--- ALTER TABLE users ADD COLUMN IF NOT EXISTS verify_otp_last_sent_at TIMESTAMPTZ;
--- ALTER TABLE users ADD COLUMN IF NOT EXISTS verify_otp_locked_until TIMESTAMPTZ;
--- ALTER TABLE users ADD COLUMN IF NOT EXISTS reset_otp               VARCHAR(10);
--- ALTER TABLE users ADD COLUMN IF NOT EXISTS reset_otp_expire_at     TIMESTAMPTZ;
--- ALTER TABLE users ADD COLUMN IF NOT EXISTS last_login              TIMESTAMPTZ;
--- ALTER TABLE users ADD COLUMN IF NOT EXISTS login_attempts          INT NOT NULL DEFAULT 0;
--- ALTER TABLE users ADD COLUMN IF NOT EXISTS lock_until              TIMESTAMPTZ;
--- ALTER TABLE users ADD COLUMN IF NOT EXISTS phone                   VARCHAR(20) DEFAULT '';
+ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar   TEXT DEFAULT '';
+-- [APPLIED 2026-06-16] google_id for OAuth — stores Google's unique "sub" identifier
+ALTER TABLE users ADD COLUMN IF NOT EXISTS google_id VARCHAR(255) UNIQUE;
+-- [APPLIED 2026-06-16] picture column for Google profile picture URL
+ALTER TABLE users ADD COLUMN IF NOT EXISTS picture  TEXT DEFAULT '';
 
--- ─── Fix: convert OTP timing columns from BIGINT (epoch ms) → TIMESTAMPTZ ──
--- Run these if your table was created with BIGINT for OTP columns.
--- The USING clause converts epoch-milliseconds to a proper timestamp.
--- ALTER TABLE users
---     ALTER COLUMN verify_otp_expire_at    TYPE TIMESTAMPTZ USING to_timestamp(verify_otp_expire_at    / 1000.0),
---     ALTER COLUMN verify_otp_last_sent_at TYPE TIMESTAMPTZ USING to_timestamp(verify_otp_last_sent_at / 1000.0),
---     ALTER COLUMN verify_otp_locked_until TYPE TIMESTAMPTZ USING to_timestamp(verify_otp_locked_until / 1000.0),
---     ALTER COLUMN reset_otp_expire_at     TYPE TIMESTAMPTZ USING to_timestamp(reset_otp_expire_at     / 1000.0);
--- ALTER TABLE users ADD COLUMN IF NOT EXISTS auth_provider           VARCHAR(10) NOT NULL DEFAULT 'local' CHECK (auth_provider IN ('local','google'));
+-- ─── Migration: password enforcement constraint (APPLIED 2026-06-17) ─────────
+-- Step 1: Drop column-level NOT NULL — the CHECK constraint becomes the authority.
+ALTER TABLE users ALTER COLUMN password DROP NOT NULL;
+
+-- Step 2: Add the CHECK constraint (safe to re-run via DO block).
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'chk_password_required_for_local'
+          AND conrelid = 'users'::regclass
+    ) THEN
+        ALTER TABLE users
+            ADD CONSTRAINT chk_password_required_for_local
+            CHECK (
+                (auth_method = 'local'  AND password IS NOT NULL) OR
+                (auth_method = 'google')
+            );
+    END IF;
+END;
+$$;
+--
+-- What this enforces at the DB level:
+--   local  → password IS NOT NULL  (bcrypt hash required — INSERT/UPDATE rejected otherwise)
+--   google → password may be NULL  (OAuth user, never set a password)
+--            or non-NULL           (user later added a local password)
+

@@ -11,6 +11,8 @@ import {
     clearAuthCookies,
     hashToken,
 } from "../utils/tokenService.js";
+import { generateState, generateCodeVerifier } from "arctic";
+import google from "../config/oauth.js";
 
 export const register = async (req, res) => {
     const { name, email, password } = req.body;
@@ -591,3 +593,187 @@ export const resetPassword = async (req, res) => {
             .json({ success: false, message: "Password reset failed. Please try again." });
     }
 };
+
+// ─── Google OAuth ─────────────────────────────────────────────────────────────
+
+/**
+ * GET /api/auth/google
+ *
+ * Generates a PKCE code verifier + state, saves both in short-lived httpOnly
+ * cookies, then redirects the browser to Google's consent page.
+ *
+ * arctic v2 uses PKCE by default — the codeVerifier must be persisted across
+ * the redirect and sent back on the callback.
+ */
+export const googleOAuthRedirect = async (req, res) => {
+    try {
+        const state        = generateState();
+        const codeVerifier = generateCodeVerifier();
+
+        // Build Google's authorization URL (arctic v2: state, codeVerifier, scopes)
+        const url = google.createAuthorizationURL(state, codeVerifier, [
+            "openid",
+            "profile",
+            "email",
+        ]);
+
+        const cookieOpts = {
+            httpOnly: true,
+            secure:   process.env.NODE_ENV === "production",
+            sameSite: "lax",          // must be lax for cross-site redirect to work
+            maxAge:   10 * 60 * 1000, // 10 minutes
+        };
+
+        // Store both state and codeVerifier — single-use, validated on callback
+        res.cookie("oauth_state",         state,        cookieOpts);
+        res.cookie("oauth_code_verifier", codeVerifier, cookieOpts);
+
+        return res.redirect(url.toString());
+    } catch (error) {
+        console.error("Google OAuth Redirect Error:", error.message, error.stack);
+        return res.redirect(
+            `${process.env.FRONTEND_URL || "http://localhost:3000"}/login?error=oauth_init_failed`
+        );
+    }
+};
+
+/**
+ * GET /api/auth/google/callback
+ *
+ * Validates state cookie, exchanges authorization code + codeVerifier for
+ * tokens via arctic, fetches Google userinfo, upserts user in DB, issues JWT
+ * cookies, then redirects to the frontend dashboard.
+ *
+ * NOTE: Live DB uses column names:
+ *   - auth_method  (not auth_provider)
+ *   - picture      (Google profile picture URL stored here)
+ *   - avatar       (user-uploaded avatar, separate field)
+ */
+export const googleOAuthCallback = async (req, res) => {
+    const { code, state } = req.query;
+    const storedState        = req.cookies?.oauth_state;
+    const storedCodeVerifier = req.cookies?.oauth_code_verifier;
+
+    const FRONTEND_URL = process.env.FRONTEND_URL || "http://localhost:3000";
+
+    // ── 1. Validate state (CSRF protection) ──────────────────────────────────
+    if (!code || !state || !storedState || !storedCodeVerifier || state !== storedState) {
+        console.error("Google OAuth Callback: state mismatch or missing params", {
+            hasCode: !!code, hasState: !!state,
+            hasStoredState: !!storedState, hasCodeVerifier: !!storedCodeVerifier,
+            stateMatch: state === storedState,
+        });
+        return res.redirect(`${FRONTEND_URL}/login?error=oauth_state_mismatch`);
+    }
+
+    // Clear both cookies immediately — single use
+    const clearOpts = {
+        httpOnly: true,
+        secure:   process.env.NODE_ENV === "production",
+        sameSite: "lax",
+    };
+    res.clearCookie("oauth_state",         clearOpts);
+    res.clearCookie("oauth_code_verifier", clearOpts);
+
+    try {
+        // ── 2. Exchange code + codeVerifier for Google tokens via arctic ─────
+        const tokens      = await google.validateAuthorizationCode(code, storedCodeVerifier);
+        const accessToken = tokens.accessToken();
+
+        // ── 3. Fetch user profile from Google userinfo endpoint ──────────────
+        const userInfoResponse = await fetch(
+            "https://www.googleapis.com/oauth2/v2/userinfo",
+            { headers: { Authorization: `Bearer ${accessToken}` } }
+        );
+
+        if (!userInfoResponse.ok) {
+            throw new Error(`Failed to fetch Google user info: ${userInfoResponse.status}`);
+        }
+
+        const googleUser = await userInfoResponse.json();
+        // googleUser: { id, email, name, picture, verified_email }
+        console.log("Google user fetched:", { email: googleUser.email, id: googleUser.id });
+
+        if (!googleUser.email || !googleUser.verified_email) {
+            return res.redirect(`${FRONTEND_URL}/login?error=google_email_unverified`);
+        }
+
+        const normalizedEmail = googleUser.email.toLowerCase();
+        const googlePicture   = googleUser.picture || "";
+        const googleName      = googleUser.name    || normalizedEmail.split("@")[0];
+
+        // ── 4. Upsert user in DB ─────────────────────────────────────────────
+        // Live DB columns: auth_method (not auth_provider), picture (Google pic)
+        // Strategy:
+        //   a) Find by google_id  → returning Google user, refresh name/picture
+        //   b) Find by email      → existing local user, link Google account
+        //   c) Neither            → create brand-new OAuth user
+
+        let user;
+
+        // a) Look up by google_id first
+        const byGoogleId = await pool.query(
+            `SELECT id, name, email FROM users WHERE google_id = $1`,
+            [googleUser.id]
+        );
+
+        if (byGoogleId.rows.length > 0) {
+            // Returning Google user — refresh name and picture
+            const updated = await pool.query(
+                `UPDATE users
+                 SET name    = $1,
+                     picture = $2
+                 WHERE google_id = $3
+                 RETURNING id, name, email`,
+                [googleName, googlePicture, googleUser.id]
+            );
+            user = updated.rows[0];
+
+        } else {
+            // b) Check if the email already belongs to a local account
+            const byEmail = await pool.query(
+                `SELECT id, name, email FROM users WHERE email = $1`,
+                [normalizedEmail]
+            );
+
+            if (byEmail.rows.length > 0) {
+                // Merge: link Google to existing local account
+                const merged = await pool.query(
+                    `UPDATE users
+                     SET google_id            = $1,
+                         picture              = CASE WHEN picture = '' OR picture IS NULL THEN $2 ELSE picture END,
+                         auth_method          = 'google',
+                         is_account_verified  = TRUE
+                     WHERE email = $3
+                     RETURNING id, name, email`,
+                    [googleUser.id, googlePicture, normalizedEmail]
+                );
+                user = merged.rows[0];
+
+            } else {
+                // c) Create brand-new OAuth user (no password)
+                const created = await pool.query(
+                    `INSERT INTO users
+                         (name, email, password, google_id, picture, auth_method, is_account_verified)
+                     VALUES ($1, $2, NULL, $3, $4, 'google', TRUE)
+                     RETURNING id, name, email`,
+                    [googleName, normalizedEmail, googleUser.id, googlePicture]
+                );
+                user = created.rows[0];
+            }
+        }
+
+        console.log("Google OAuth: user upserted:", user);
+
+        // ── 5. Issue JWT + refresh token cookies (same as regular login) ─────
+        await generateTokens(res, { id: user.id, email: user.email }, false);
+
+        // ── 6. Redirect to frontend dashboard ────────────────────────────────
+        return res.redirect(`${FRONTEND_URL}/dashboard`);
+
+    } catch (error) {
+        console.error("Google OAuth Callback Error:", error.message, error.stack);
+        return res.redirect(`${FRONTEND_URL}/login?error=oauth_failed`);
+    }
+};
+

@@ -11,6 +11,8 @@ import {
     sendResetOtp,
     resetPassword,
     resendVerifyOtp,
+    googleOAuthRedirect,
+    googleOAuthCallback,
 } from "../controllers/authController.js";
 import userAuth from "../middleware/userAuth.js";
 import { loginLimiter, otpLimiter, registerLimiter } from "../middleware/rateLimit.js";
@@ -46,3 +48,8 @@ authRouter.get("/me",                  userAuth,                          getMe)
 // Legacy is-auth (kept for backwards-compat)
 // POST is a state-changing method — CSRF protection applied
 authRouter.post("/is-auth",            userAuth, csrfProtection,          isAuthenticated);
+
+// ─── Google OAuth ─────────────────────────────────────────────────────────────
+// No userAuth / csrfProtection — OAuth state cookie is the security mechanism
+authRouter.get("/google",              googleOAuthRedirect);
+authRouter.get("/google/callback",     googleOAuthCallback);

@@ -29,6 +29,7 @@ public/uploads/
 *.pem
 *.key
 *.txt
+*.md
 
 tmp/
 temp/
