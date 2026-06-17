@@ -7,6 +7,7 @@ import {
   getPatterns,
   getProblems,
   getProgress,
+  getProgressSummary,
   toggleProgress,
 } from "../controllers/knowledgeController.js";
 import userAuth from "../middleware/userAuth.js";
@@ -21,6 +22,7 @@ knowledgeRouter.get("/patterns/:topicId",       userAuth, getPatterns);
 knowledgeRouter.get("/problems/:patternId",     userAuth, getProblems);
 
 // Protected routes (JWT required + Email verified)
+knowledgeRouter.get("/progress/summary",   userAuth,                    getProgressSummary);
 knowledgeRouter.get("/progress",           userAuth,                    getProgress);
 // POST is state-changing — CSRF protection required
 knowledgeRouter.post("/progress/toggle",   userAuth, csrfProtection,   toggleProgress);

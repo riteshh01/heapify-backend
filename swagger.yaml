@@ -1,0 +1,931 @@
+openapi: 3.0.3
+
+info:
+  title: Heapify API
+  version: "1.0.0"
+  description: |
+    Full backend API for the **Heapify** platform — DSA sheet, theory learning, user auth and progress tracking.
+
+    ## Security Model
+    - **Access token**: httpOnly cookie (`accessToken`, 15-min lifetime). Forwarded automatically by the browser.
+    - **Refresh token**: httpOnly cookie (`refreshToken`, 7d / 30d). Used by `POST /auth/refresh` silently.
+    - **CSRF protection**: Double-Submit Cookie pattern. On login the server sets a non-httpOnly `csrfToken` cookie.
+      All state-changing requests (POST/PUT/PATCH/DELETE) must echo it as the `X-CSRF-Token` header.
+    - **Email verification**: Required before any protected knowledge/theory routes are accessible.
+
+servers:
+  - url: http://localhost:4000/api-docs
+    description: Local development
+
+# ─── Security scheme definitions ────────────────────────────────────────────
+
+components:
+  securitySchemes:
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: accessToken
+      description: httpOnly JWT access token set by the server on login/refresh.
+
+    csrfToken:
+      type: apiKey
+      in: header
+      name: X-CSRF-Token
+      description: |
+        CSRF double-submit value. Read the non-httpOnly `csrfToken` cookie
+        (set on login) and mirror it in this header for all state-changing requests.
+
+  schemas:
+    # ── Common ──────────────────────────────────────────────────────────────
+
+    SuccessTrue:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+
+    ErrorResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: false
+        message:
+          type: string
+
+    # ── Auth ────────────────────────────────────────────────────────────────
+
+    User:
+      type: object
+      properties:
+        id:          { type: integer }
+        name:        { type: string }
+        email:       { type: string, format: email }
+        avatar:      { type: string }
+        role:        { type: string, enum: [user, admin] }
+        created_at:  { type: string, format: date-time }
+
+    # ── DSA Knowledge ────────────────────────────────────────────────────────
+
+    Topic:
+      type: object
+      properties:
+        id:            { type: integer }
+        name:          { type: string }
+        problem_count: { type: integer }
+
+    Pattern:
+      type: object
+      properties:
+        id:          { type: integer }
+        topic_id:    { type: integer }
+        name:        { type: string }
+        description: { type: string, nullable: true }
+
+    Problem:
+      type: object
+      properties:
+        id:           { type: integer }
+        patternId:    { type: integer }
+        title:        { type: string }
+        difficulty:   { type: string, enum: [easy, medium, hard] }
+        type:         { type: string, nullable: true }
+        problemLink:  { type: string, format: uri, nullable: true }
+        youtubeLink:  { type: string, format: uri, nullable: true }
+        articleLink:  { type: string, format: uri, nullable: true }
+        notes:        { type: string, nullable: true }
+        companyTag:   { type: string, nullable: true }
+
+    ProgressRow:
+      type: object
+      properties:
+        problem_id:     { type: integer }
+        completed:      { type: boolean }
+        attempts:       { type: integer }
+        last_solved_at: { type: string, format: date-time, nullable: true }
+
+    DifficultyStats:
+      type: object
+      properties:
+        solved: { type: integer }
+        total:  { type: integer }
+
+    TopicProgress:
+      type: object
+      properties:
+        topicId:   { type: integer }
+        topicName: { type: string }
+        solved:    { type: integer }
+        total:     { type: integer }
+        percent:   { type: integer, minimum: 0, maximum: 100 }
+
+    RecentActivityItem:
+      type: object
+      properties:
+        problemId:  { type: integer }
+        title:      { type: string }
+        difficulty: { type: string, enum: [easy, medium, hard] }
+        topicName:  { type: string }
+        solvedAt:   { type: string, format: date-time, nullable: true }
+
+    ProgressSummary:
+      type: object
+      properties:
+        totalSolved:       { type: integer }
+        totalProblems:     { type: integer }
+        completionPercent: { type: integer, minimum: 0, maximum: 100 }
+        streak:
+          type: object
+          properties:
+            current: { type: integer, description: "Consecutive days solved (today or yesterday must qualify)" }
+            longest: { type: integer, description: "All-time best consecutive-day run" }
+        byDifficulty:
+          type: object
+          properties:
+            easy:   { $ref: '#/components/schemas/DifficultyStats' }
+            medium: { $ref: '#/components/schemas/DifficultyStats' }
+            hard:   { $ref: '#/components/schemas/DifficultyStats' }
+        byTopic:
+          type: array
+          items: { $ref: '#/components/schemas/TopicProgress' }
+        recentActivity:
+          type: array
+          items: { $ref: '#/components/schemas/RecentActivityItem' }
+        lastSolvedAt: { type: string, format: date-time, nullable: true }
+        memberSince:  { type: string, format: date-time, nullable: true }
+
+    # ── Theory ──────────────────────────────────────────────────────────────
+
+    Subject:
+      type: object
+      properties:
+        id:          { type: integer }
+        name:        { type: string }
+        description: { type: string, nullable: true }
+        icon:        { type: string, nullable: true }
+
+    ChapterStub:
+      type: object
+      properties:
+        id:             { type: integer }
+        name:           { type: string }
+        sequenceOrder:  { type: integer }
+        articles:
+          type: array
+          items: { $ref: '#/components/schemas/ArticleStub' }
+
+    ArticleStub:
+      type: object
+      properties:
+        id:               { type: integer }
+        chapterId:        { type: integer }
+        title:            { type: string }
+        readTimeMinutes:  { type: integer, nullable: true }
+        isPremium:        { type: boolean }
+
+    Article:
+      allOf:
+        - $ref: '#/components/schemas/ArticleStub'
+        - type: object
+          properties:
+            chapterName:  { type: string }
+            subjectId:    { type: integer }
+            subjectName:  { type: string }
+            content:      { type: string, nullable: true }
+            videoLink:    { type: string, format: uri, nullable: true }
+            coverImage:   { type: string, format: uri, nullable: true }
+            createdAt:    { type: string, format: date-time }
+
+# ─── Paths ───────────────────────────────────────────────────────────────────
+
+paths:
+
+  # ════════════════════════════════════════════════════
+  # AUTH
+  # ════════════════════════════════════════════════════
+
+  /auth/register:
+    post:
+      tags: [Auth]
+      summary: Register a new local user
+      description: |
+        Creates a new account and immediately sends an email verification OTP.
+        No authentication required.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, email, password]
+              properties:
+                name:
+                  type: string
+                  minLength: 2
+                  maxLength: 50
+                email:
+                  type: string
+                  format: email
+                password:
+                  type: string
+                  description: "≥8 chars, must contain uppercase, lowercase, digit, special char"
+      responses:
+        "200":
+          description: Registration successful — OTP sent
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessTrue'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          otpExpiry:    { type: string, format: date-time }
+                          otpCooldown:  { type: string, format: date-time }
+                          maskedEmail:  { type: string }
+                      message: { type: string }
+        "400":
+          description: Validation error or user already exists
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        "429":
+          description: Rate limited
+        "500":
+          description: Server error
+
+  /auth/login:
+    post:
+      tags: [Auth]
+      summary: Login with email & password
+      description: |
+        Issues an `accessToken` (httpOnly, 15 min) and `refreshToken`
+        (httpOnly, 7d or 30d if rememberMe). Also sets a non-httpOnly
+        `csrfToken` cookie for subsequent mutations.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email:      { type: string, format: email }
+                password:   { type: string }
+                rememberMe: { type: boolean, default: false }
+      responses:
+        "200":
+          description: Login successful — auth cookies set
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SuccessTrue' }
+        "401":
+          description: Invalid credentials
+        "403":
+          description: Email not verified
+        "429":
+          description: Rate limited (too many login attempts)
+        "500":
+          description: Server error
+
+  /auth/logout:
+    post:
+      tags: [Auth]
+      summary: Logout — revoke refresh token & clear cookies
+      description: |
+        Deletes the refresh token from the DB and clears all auth cookies.
+        Safe to call even if the access token is already expired.
+      responses:
+        "200":
+          description: Logged out
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessTrue'
+                  - type: object
+                    properties:
+                      message: { type: string, example: "Logged Out" }
+
+  /auth/refresh:
+    post:
+      tags: [Auth]
+      summary: Silent token refresh
+      description: |
+        Validates the `refreshToken` cookie, rotates the token pair
+        (new access + refresh), and returns the current user profile.
+        Called automatically by the frontend `api.ts` interceptor on 401.
+        **No `accessToken` or CSRF needed** — the refresh token is the credential.
+      responses:
+        "200":
+          description: Tokens rotated — new cookies set
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessTrue'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          user:
+                            type: object
+                            properties:
+                              id:    { type: integer }
+                              name:  { type: string }
+                              email: { type: string }
+        "401":
+          description: Refresh token missing, invalid or expired
+        "403":
+          description: Email not verified
+
+  /auth/me:
+    get:
+      tags: [Auth]
+      summary: Get current user profile
+      description: Returns the authenticated user's profile. Used on page load to hydrate AuthContext.
+      security:
+        - cookieAuth: []
+      responses:
+        "200":
+          description: User profile
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessTrue'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          user: { $ref: '#/components/schemas/User' }
+        "401":
+          description: Not authenticated
+        "404":
+          description: User not found
+
+  /auth/is-auth:
+    post:
+      tags: [Auth]
+      summary: Legacy session check (prefer GET /me)
+      security:
+        - cookieAuth: []
+        - csrfToken: []
+      responses:
+        "200":
+          description: Session is valid
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SuccessTrue' }
+
+  /auth/send-verify-otp:
+    post:
+      tags: [Auth — Email Verification]
+      summary: Send email verification OTP (logged-in user)
+      description: Sends a 6-digit OTP to the authenticated user's email. OTP expires in 2 minutes.
+      security:
+        - cookieAuth: []
+      responses:
+        "200":
+          description: OTP sent
+        "400":
+          description: Already verified
+        "429":
+          description: Rate limited
+        "500":
+          description: Server error
+
+  /auth/resend-verify-otp:
+    post:
+      tags: [Auth — Email Verification]
+      summary: Resend email verification OTP (unauthenticated — by email)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email: { type: string, format: email }
+      responses:
+        "200":
+          description: OTP re-sent
+        "429":
+          description: Rate limited / locked
+        "500":
+          description: Server error
+
+  /auth/verify-account:
+    post:
+      tags: [Auth — Email Verification]
+      summary: Verify email with OTP
+      description: |
+        Validates the OTP and marks the account as verified.
+        On success, issues a full access + refresh token pair so the user
+        is immediately logged in without a separate login call.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, otp]
+              properties:
+                email: { type: string, format: email }
+                otp:   { type: string, minLength: 6, maxLength: 6 }
+      responses:
+        "200":
+          description: Email verified — auth cookies set
+        "400":
+          description: Invalid / expired OTP
+        "429":
+          description: Too many wrong attempts — account locked
+
+  /auth/send-reset-otp:
+    post:
+      tags: [Auth — Password Reset]
+      summary: Send password reset OTP
+      description: |
+        Sends a 6-digit reset OTP to the given email.
+        Always returns 200 to prevent email enumeration.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email: { type: string, format: email }
+      responses:
+        "200":
+          description: OTP sent (or silently skipped if email not found)
+        "429":
+          description: Rate limited
+        "500":
+          description: Server error
+
+  /auth/reset-password:
+    post:
+      tags: [Auth — Password Reset]
+      summary: Reset password with OTP
+      description: |
+        Validates the OTP and sets the new password.
+        Revokes **all** active refresh tokens for the user (security best practice).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, otp, newPassword]
+              properties:
+                email:       { type: string, format: email }
+                otp:         { type: string, minLength: 6, maxLength: 6 }
+                newPassword: { type: string, description: "Must pass strong password requirements" }
+      responses:
+        "200":
+          description: Password reset — all sessions revoked
+        "400":
+          description: Invalid OTP or weak password
+
+  /auth/google:
+    get:
+      tags: [Auth — Google OAuth]
+      summary: Initiate Google OAuth flow (PKCE)
+      description: |
+        Generates a PKCE `code_verifier` + `state`, stores both in short-lived
+        httpOnly cookies, then redirects the browser to Google's consent page.
+      responses:
+        "302":
+          description: Redirect to Google consent URL
+
+  /auth/google/callback:
+    get:
+      tags: [Auth — Google OAuth]
+      summary: Google OAuth callback
+      description: |
+        Validates `state`, exchanges the authorization `code` + `codeVerifier` for
+        Google tokens via arctic, fetches userinfo, upserts the user in the DB,
+        issues JWT cookies, and redirects to the frontend dashboard.
+      parameters:
+        - name: code
+          in: query
+          required: true
+          schema: { type: string }
+        - name: state
+          in: query
+          required: true
+          schema: { type: string }
+      responses:
+        "302":
+          description: Redirect to /dashboard on success or /login?error=… on failure
+
+  # ════════════════════════════════════════════════════
+  # USER
+  # ════════════════════════════════════════════════════
+
+  /user/data:
+    get:
+      tags: [User]
+      summary: Get current user data
+      security:
+        - cookieAuth: []
+      responses:
+        "200":
+          description: User data
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessTrue'
+                  - type: object
+                    properties:
+                      userData: { $ref: '#/components/schemas/User' }
+        "401":
+          description: Not authenticated
+
+  # ════════════════════════════════════════════════════
+  # KNOWLEDGE — DSA Sheet
+  # ════════════════════════════════════════════════════
+
+  /knowledge/topics:
+    get:
+      tags: [Knowledge — DSA]
+      summary: List all DSA topics with problem counts
+      security:
+        - cookieAuth: []
+      responses:
+        "200":
+          description: Topics list
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessTrue'
+                  - type: object
+                    properties:
+                      count:  { type: integer }
+                      topics:
+                        type: array
+                        items: { $ref: '#/components/schemas/Topic' }
+        "401": { description: Not authenticated }
+        "500": { description: Server error }
+
+  /knowledge/topics/{topicId}:
+    get:
+      tags: [Knowledge — DSA]
+      summary: Get topic with all patterns and nested problems
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: topicId
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Full topic tree
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessTrue'
+                  - type: object
+                    properties:
+                      topic:
+                        type: object
+                        properties:
+                          id:          { type: integer }
+                          name:        { type: string }
+                          description: { type: string, nullable: true }
+                          patterns:
+                            type: array
+                            items:
+                              allOf:
+                                - $ref: '#/components/schemas/Pattern'
+                                - type: object
+                                  properties:
+                                    problems:
+                                      type: array
+                                      items: { $ref: '#/components/schemas/Problem' }
+        "400": { description: Invalid topicId }
+        "404": { description: Topic not found }
+        "401": { description: Not authenticated }
+
+  /knowledge/patterns/{topicId}:
+    get:
+      tags: [Knowledge — DSA]
+      summary: Get patterns for a topic
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: topicId
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Patterns list
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessTrue'
+                  - type: object
+                    properties:
+                      count:    { type: integer }
+                      patterns:
+                        type: array
+                        items: { $ref: '#/components/schemas/Pattern' }
+        "400": { description: Invalid topicId }
+        "401": { description: Not authenticated }
+
+  /knowledge/problems/{patternId}:
+    get:
+      tags: [Knowledge — DSA]
+      summary: Get problems for a pattern
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: patternId
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Problems list
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessTrue'
+                  - type: object
+                    properties:
+                      count:    { type: integer }
+                      problems:
+                        type: array
+                        items: { $ref: '#/components/schemas/Problem' }
+        "400": { description: Invalid patternId }
+        "401": { description: Not authenticated }
+
+  /knowledge/progress:
+    get:
+      tags: [Knowledge — Progress]
+      summary: Get raw user progress (flat solved list)
+      description: Returns the flat list of problem statuses for the authenticated user.
+      security:
+        - cookieAuth: []
+      responses:
+        "200":
+          description: Progress rows
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessTrue'
+                  - type: object
+                    properties:
+                      progress:
+                        type: array
+                        items: { $ref: '#/components/schemas/ProgressRow' }
+        "401": { description: Not authenticated }
+        "500": { description: Server error }
+
+  /knowledge/progress/summary:
+    get:
+      tags: [Knowledge — Progress]
+      summary: Get rich progress summary with metadata
+      description: |
+        Returns a comprehensive progress summary including:
+        - Total solved / total problems / completion %
+        - Current and longest solve streaks (calendar-day based)
+        - Solved count split by difficulty (easy / medium / hard)
+        - Per-topic breakdown with % completion
+        - Last 7 recently solved problems
+        - Raw progress list (same as `/progress`) for checkbox state
+        
+        **Preferred over `/progress`** — single request replaces two separate calls.
+      security:
+        - cookieAuth: []
+      responses:
+        "200":
+          description: Rich progress summary
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessTrue'
+                  - type: object
+                    properties:
+                      summary:
+                        $ref: '#/components/schemas/ProgressSummary'
+                      progress:
+                        type: array
+                        description: Raw solved rows (same shape as GET /knowledge/progress)
+                        items: { $ref: '#/components/schemas/ProgressRow' }
+        "401": { description: Not authenticated }
+        "500": { description: Server error }
+
+  /knowledge/progress/toggle:
+    post:
+      tags: [Knowledge — Progress]
+      summary: Toggle a problem's solved status
+      description: |
+        Upserts the problem status row. If the problem was not solved, marks it solved
+        and increments attempts. If already solved, un-marks it.
+        Requires both a valid `accessToken` cookie and the `X-CSRF-Token` header.
+      security:
+        - cookieAuth: []
+        - csrfToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [problemId]
+              properties:
+                problemId:
+                  type: integer
+                  description: ID of the problem to toggle
+      responses:
+        "200":
+          description: Toggle result
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessTrue'
+                  - type: object
+                    properties:
+                      problemId: { type: integer }
+                      completed: { type: boolean }
+                      attempts:  { type: integer }
+        "400": { description: Invalid problemId }
+        "401": { description: Not authenticated }
+        "403": { description: CSRF token missing or invalid }
+        "500": { description: Server error }
+
+  # ════════════════════════════════════════════════════
+  # THEORY
+  # ════════════════════════════════════════════════════
+
+  /theory/subjects:
+    get:
+      tags: [Theory]
+      summary: List all theory subjects
+      description: Returns all subjects (OS, Networks, DBMS, Git, OOP, System Design, etc.)
+      security:
+        - cookieAuth: []
+      responses:
+        "200":
+          description: Subjects list
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessTrue'
+                  - type: object
+                    properties:
+                      subjects:
+                        type: array
+                        items: { $ref: '#/components/schemas/Subject' }
+        "401": { description: Not authenticated }
+        "500": { description: Server error }
+
+  /theory/subjects/{subjectId}/chapters:
+    get:
+      tags: [Theory]
+      summary: Get chapters (with article stubs) for a subject
+      description: |
+        Returns all chapters for the subject, each containing a list of
+        article stubs (id, title, read time, isPremium — no content body).
+        Uses a single LEFT JOIN so chapters with zero articles still appear.
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: subjectId
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Chapters with article stubs
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessTrue'
+                  - type: object
+                    properties:
+                      chapters:
+                        type: array
+                        items: { $ref: '#/components/schemas/ChapterStub' }
+        "400": { description: Invalid subjectId }
+        "401": { description: Not authenticated }
+        "500": { description: Server error }
+
+  /theory/chapters/{chapterId}/articles:
+    get:
+      tags: [Theory]
+      summary: Get article stubs for a chapter
+      description: Returns article stubs (no content body) for the given chapter.
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: chapterId
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Articles list
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessTrue'
+                  - type: object
+                    properties:
+                      count:    { type: integer }
+                      articles:
+                        type: array
+                        items: { $ref: '#/components/schemas/ArticleStub' }
+        "400": { description: Invalid chapterId }
+        "401": { description: Not authenticated }
+        "500": { description: Server error }
+
+  /theory/articles/{articleId}:
+    get:
+      tags: [Theory]
+      summary: Get full article content
+      description: Returns the complete article including markdown/HTML content body.
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: articleId
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Full article
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessTrue'
+                  - type: object
+                    properties:
+                      article: { $ref: '#/components/schemas/Article' }
+        "400": { description: Invalid articleId }
+        "401": { description: Not authenticated }
+        "404": { description: Article not found }
+        "500": { description: Server error }
+
+  /theory/debug:
+    get:
+      tags: [Theory]
+      summary: Debug — snapshot of all theory tables (no auth)
+      description: |
+        Returns a raw snapshot of subjects / chapters / articles (first 50).
+        **Remove this endpoint in production once DB seeding is confirmed.**
+      responses:
+        "200":
+          description: Debug snapshot
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessTrue'
+                  - type: object
+                    properties:
+                      subjects: { type: array, items: { type: object } }
+                      chapters: { type: array, items: { type: object } }
+                      articles: { type: array, items: { type: object } }
+        "500": { description: Server error }
+
+tags:
+  - name: Auth
+    description: Core auth — register, login, logout, token refresh
+  - name: Auth — Email Verification
+    description: OTP-based email verification flow
+  - name: Auth — Password Reset
+    description: OTP-based password reset flow
+  - name: Auth — Google OAuth
+    description: PKCE-based Google OAuth 2.0 (via arctic)
+  - name: User
+    description: Authenticated user data
+  - name: Knowledge — DSA
+    description: DSA sheet topics, patterns and problems
+  - name: Knowledge — Progress
+    description: User solve-progress tracking with rich metadata
+  - name: Theory
+    description: CS theory subjects, chapters and articles
