@@ -57,8 +57,6 @@ CREATE TABLE IF NOT EXISTS dsa_problems (
 
     notes               TEXT,
 
-    company_tag         VARCHAR(255),
-
     created_at          TIMESTAMPTZ DEFAULT NOW()
 );
 
@@ -95,3 +93,28 @@ CREATE TABLE IF NOT EXISTS dsa_user_problem_status (
 
     UNIQUE(user_id, problem_id)
 );
+
+
+CREATE TABLE IF NOT EXISTS tags (
+
+    id              SERIAL PRIMARY KEY,
+
+    name            VARCHAR(100) UNIQUE NOT NULL
+);
+
+
+CREATE TABLE IF NOT EXISTS problem_tags (
+
+    problem_id      INT NOT NULL
+                    REFERENCES dsa_problems(id)
+                    ON DELETE CASCADE,
+
+    tag_id          INT NOT NULL
+                    REFERENCES tags(id)
+                    ON DELETE CASCADE,
+
+    PRIMARY KEY(problem_id, tag_id)
+);
+
+-- ALTER TABLE tags ADD COLUMN tag_type VARCHAR(20);
+ALTER TABLE dsa_problems DROP COLUMN IF EXISTS company_tag;

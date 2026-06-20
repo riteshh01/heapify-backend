@@ -8,7 +8,7 @@ const runSQL = async () => {
   try {
 
     // SQL file read karo by giving correct file path
-    const sql = fs.readFileSync('./schema/users.sql', 'utf8');
+    const sql = fs.readFileSync('./schema/dsa_sheet.sql', 'utf8');
 
     // Execute karo
     await pool.query(sql);

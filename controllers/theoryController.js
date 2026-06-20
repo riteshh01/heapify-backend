@@ -21,6 +21,82 @@ export const getSubjects = async (req, res) => {
 };
 
 /**
+ * GET /api/theory/subjects/name/:slug/chapters
+ * Resolves subject by case-insensitive partial name match and returns chapters.
+ * Eliminates the need to first call /subjects to get an ID — used by
+ * subject-specific pages (Git, OS, DBMS, etc.) to load in ONE round-trip.
+ */
+export const getChaptersBySubjectName = async (req, res) => {
+  const { slug } = req.params;
+
+  if (!slug || typeof slug !== "string") {
+    return res.status(400).json({ success: false, message: "Invalid subject slug" });
+  }
+
+  try {
+    // Resolve the subject first, then fetch chapters in one query
+    const result = await pool.query(
+      `SELECT
+         s.id              AS subject_id,
+         s.name            AS subject_name,
+         c.id              AS chapter_id,
+         c.name            AS chapter_name,
+         c.sequence_order,
+         a.id              AS article_id,
+         a.title           AS article_title,
+         a.read_time_minutes,
+         a.is_premium
+       FROM theory_subjects s
+       LEFT JOIN theory_chapters c ON c.subject_id = s.id
+       LEFT JOIN theory_articles a ON a.chapter_id = c.id
+       WHERE LOWER(s.name) LIKE LOWER($1)
+       ORDER BY c.sequence_order ASC, c.id ASC, a.id ASC`,
+      [`%${slug}%`]
+    );
+
+    if (result.rows.length === 0 || result.rows[0].subject_id === null) {
+      return res.status(404).json({ success: false, message: `Subject matching "${slug}" not found` });
+    }
+
+    const subjectId   = result.rows[0].subject_id;
+    const subjectName = result.rows[0].subject_name;
+
+    // Fold rows into chapter → articles shape
+    const chapMap = new Map();
+    for (const row of result.rows) {
+      if (!row.chapter_id) continue;
+      if (!chapMap.has(row.chapter_id)) {
+        chapMap.set(row.chapter_id, {
+          id: row.chapter_id,
+          name: row.chapter_name,
+          sequenceOrder: row.sequence_order,
+          articles: [],
+        });
+      }
+      if (row.article_id !== null) {
+        chapMap.get(row.chapter_id).articles.push({
+          id: row.article_id,
+          chapterId: row.chapter_id,
+          title: row.article_title,
+          readTimeMinutes: row.read_time_minutes,
+          isPremium: row.is_premium,
+        });
+      }
+    }
+
+    res.status(200).json({
+      success: true,
+      subjectId,
+      subjectName,
+      chapters: Array.from(chapMap.values()),
+    });
+  } catch (error) {
+    console.error("Error fetching chapters by subject name:", error.message);
+    res.status(500).json({ success: false, message: "Failed to fetch chapters" });
+  }
+};
+
+/**
  * GET /api/theory/subjects/:subjectId/chapters
  * Returns all chapters for a given subject, each with its article list (stubs).
  * Uses a single LEFT JOIN query so chapters with 0 articles still appear.

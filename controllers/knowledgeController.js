@@ -50,8 +50,7 @@ export const getTopicData = async (req, res) => {
          pr.problem_link,
          pr.youtube_link,
          pr.article_link,
-         pr.notes,
-         pr.company_tag
+         pr.notes
        FROM dsa_topics t
        LEFT JOIN dsa_patterns pa ON pa.topic_id = t.id
        LEFT JOIN dsa_problems pr ON pr.pattern_id = pa.id
@@ -95,7 +94,6 @@ export const getTopicData = async (req, res) => {
         youtubeLink: row.youtube_link,
         articleLink: row.article_link,
         notes: row.notes,
-        companyTag: row.company_tag,
       });
     }
 
@@ -150,7 +148,7 @@ export const getProblems = async (req, res) => {
   try {
     const result = await pool.query(
       `SELECT id, pattern_id, title, difficulty, type,
-              problem_link, youtube_link, article_link, notes, company_tag, created_at
+              problem_link, youtube_link, article_link, notes, created_at
        FROM dsa_problems
        WHERE pattern_id = $1
        ORDER BY id ASC`,
@@ -170,7 +168,6 @@ export const getProblems = async (req, res) => {
         youtubeLink: row.youtube_link,
         articleLink: row.article_link,
         notes: row.notes,
-        companyTag: row.company_tag,
       })),
     });
   } catch (error) {
@@ -349,6 +346,36 @@ export const getProgressSummary = async (req, res) => {
   } catch (error) {
     console.error("Error fetching progress summary:", error.message);
     res.status(500).json({ success: false, message: "Failed to fetch progress summary" });
+  }
+};
+
+// GET /api/knowledge/problems/:problemId/tags
+// Returns all tags (companies + topics) associated with a problem
+export const getProblemTags = async (req, res) => {
+  const { problemId } = req.params;
+
+  if (!problemId || isNaN(problemId)) {
+    return res.status(400).json({ success: false, message: "Invalid problemId" });
+  }
+
+  try {
+    const result = await pool.query(
+      `SELECT t.id, t.name, t.tag_type
+       FROM tags t
+       JOIN problem_tags pt ON pt.tag_id = t.id
+       WHERE pt.problem_id = $1
+       ORDER BY t.tag_type ASC, t.name ASC`,
+      [problemId]
+    );
+
+    res.status(200).json({
+      success: true,
+      count: result.rows.length,
+      tags: result.rows,
+    });
+  } catch (error) {
+    console.error("Error fetching problem tags:", error.message);
+    res.status(500).json({ success: false, message: "Failed to fetch tags" });
   }
 };
 

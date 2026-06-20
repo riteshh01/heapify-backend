@@ -3,6 +3,7 @@
 import express from "express";
 import {
   getSubjects,
+  getChaptersBySubjectName,
   getChaptersBySubject,
   getArticlesByChapter,
   getArticle,
@@ -16,7 +17,9 @@ export const theoryRouter = express.Router();
 theoryRouter.get("/debug", debugTheory);
 
 // All other routes require authentication
-theoryRouter.get("/subjects",                           userAuth, getSubjects);
-theoryRouter.get("/subjects/:subjectId/chapters",       userAuth, getChaptersBySubject);
-theoryRouter.get("/chapters/:chapterId/articles",       userAuth, getArticlesByChapter);
-theoryRouter.get("/articles/:articleId",                userAuth, getArticle);
+theoryRouter.get("/subjects",                                   userAuth, getSubjects);
+// Name-based route MUST come before the numeric :subjectId route to avoid collision
+theoryRouter.get("/subjects/name/:slug/chapters",               userAuth, getChaptersBySubjectName);
+theoryRouter.get("/subjects/:subjectId/chapters",               userAuth, getChaptersBySubject);
+theoryRouter.get("/chapters/:chapterId/articles",               userAuth, getArticlesByChapter);
+theoryRouter.get("/articles/:articleId",                        userAuth, getArticle);

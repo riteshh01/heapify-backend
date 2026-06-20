@@ -132,26 +132,6 @@ FOR EACH ROW
 EXECUTE FUNCTION set_updated_at();
 
 
-CREATE TABLE IF NOT EXISTS tags (
-
-    id              SERIAL PRIMARY KEY,
-
-    name            VARCHAR(100) UNIQUE NOT NULL
-);
-
-
-CREATE TABLE IF NOT EXISTS problem_tags (
-
-    problem_id      INT NOT NULL
-                    REFERENCES dsa_problems(id)
-                    ON DELETE CASCADE,
-
-    tag_id          INT NOT NULL
-                    REFERENCES tags(id)
-                    ON DELETE CASCADE,
-
-    PRIMARY KEY(problem_id, tag_id)
-);
 
 
 CREATE TABLE IF NOT EXISTS user_stats (

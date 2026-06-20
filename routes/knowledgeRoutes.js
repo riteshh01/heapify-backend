@@ -6,6 +6,7 @@ import {
   getTopicData,
   getPatterns,
   getProblems,
+  getProblemTags,
   getProgress,
   getProgressSummary,
   toggleProgress,
@@ -16,10 +17,11 @@ import csrfProtection from "../middleware/csrfProtection.js";
 export const knowledgeRouter = express.Router();
 
 // All routes now require authentication and email verification
-knowledgeRouter.get("/topics",                  userAuth, getTopics);
-knowledgeRouter.get("/topics/:topicId",         userAuth, getTopicData);
-knowledgeRouter.get("/patterns/:topicId",       userAuth, getPatterns);
-knowledgeRouter.get("/problems/:patternId",     userAuth, getProblems);
+knowledgeRouter.get("/topics",                      userAuth, getTopics);
+knowledgeRouter.get("/topics/:topicId",             userAuth, getTopicData);
+knowledgeRouter.get("/patterns/:topicId",           userAuth, getPatterns);
+knowledgeRouter.get("/problems/:patternId",         userAuth, getProblems);
+knowledgeRouter.get("/problems/:problemId/tags",    userAuth, getProblemTags);
 
 // Protected routes (JWT required + Email verified)
 knowledgeRouter.get("/progress/summary",   userAuth,                    getProgressSummary);
