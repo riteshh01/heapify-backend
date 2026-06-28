@@ -216,7 +216,7 @@ export const getArticlesByChapter = async (req, res) => {
 
 /**
  * GET /api/theory/articles/:articleId
- * Returns full article content for reading.
+ * Returns full article content for reading, plus any associated images.
  */
 export const getArticle = async (req, res) => {
   const { articleId } = req.params;
@@ -239,11 +239,16 @@ export const getArticle = async (req, res) => {
          a.created_at,
          c.name AS chapter_name,
          s.id   AS subject_id,
-         s.name AS subject_name
+         s.name AS subject_name,
+         img.id        AS img_id,
+         img.image_url AS img_url,
+         img.caption   AS img_caption
        FROM theory_articles a
        JOIN theory_chapters c ON c.id = a.chapter_id
        JOIN theory_subjects s ON s.id = c.subject_id
-       WHERE a.id = $1`,
+       LEFT JOIN theory_article_images img ON img.article_id = a.id
+       WHERE a.id = $1
+       ORDER BY img.id ASC`,
       [articleId]
     );
 
@@ -251,22 +256,33 @@ export const getArticle = async (req, res) => {
       return res.status(404).json({ success: false, message: "Article not found" });
     }
 
-    const row = result.rows[0];
+    const first = result.rows[0];
+
+    // Collect images (multiple rows due to LEFT JOIN)
+    const images = result.rows
+      .filter((r) => r.img_id !== null)
+      .map((r) => ({
+        id: r.img_id,
+        imageUrl: r.img_url,
+        caption: r.img_caption,
+      }));
+
     res.status(200).json({
       success: true,
       article: {
-        id: row.id,
-        chapterId: row.chapter_id,
-        chapterName: row.chapter_name,
-        subjectId: row.subject_id,
-        subjectName: row.subject_name,
-        title: row.title,
-        content: row.content,
-        readTimeMinutes: row.read_time_minutes,
-        isPremium: row.is_premium,
-        videoLink: row.video_link,
-        coverImage: row.cover_image,
-        createdAt: row.created_at,
+        id: first.id,
+        chapterId: first.chapter_id,
+        chapterName: first.chapter_name,
+        subjectId: first.subject_id,
+        subjectName: first.subject_name,
+        title: first.title,
+        content: first.content,
+        readTimeMinutes: first.read_time_minutes,
+        isPremium: first.is_premium,
+        videoLink: first.video_link,
+        coverImage: first.cover_image,
+        createdAt: first.created_at,
+        images,
       },
     });
   } catch (error) {
