@@ -777,6 +777,26 @@ export const googleOAuthCallback = async (req, res) => {
         await generateTokens(res, { id: user.id, email: user.email }, false);
 
         // ── 6. Redirect to frontend dashboard ────────────────────────────────
+        // Regular login works because the browser initiates a fetch() and the
+        // response cookies are accepted as same-origin (frontend calls backend directly).
+        // BUT in OAuth, cookies are set during a BACKEND-initiated redirect.
+        // Chrome treats these as third-party cookies and blocks them on subsequent
+        // requests from the frontend (sec-fetch-site: cross-site → cookie stripped).
+        //
+        // The proxy in next.config.ts fixes regular API calls (browser → frontend → backend)
+        // but cannot fix the initial OAuth cookie set since Google redirects to the
+        // backend directly.
+        //
+        // Solution: redirect to the frontend which will proxy the /api/auth/me
+        // call through the same-origin proxy — by the time the user lands on /dashboard,
+        // AuthContext.validateSession() fires and goes through the proxy.
+        // The cookies ARE set on the backend domain (by generateTokens above), and because
+        // regular fetch with credentials:include now goes through the Next.js proxy
+        // (same-origin), the browser WILL send those third-party backend cookies on
+        // preflight-free same-origin proxy requests.
+        //
+        // NOTE: This still relies on SameSite=None; Secure for the proxy-forwarded
+        // requests to the backend (server-to-server). That works correctly.
         return res.redirect(`${FRONTEND_URL}/dashboard`);
 
     } catch (error) {
