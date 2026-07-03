@@ -617,10 +617,14 @@ export const googleOAuthRedirect = async (req, res) => {
             "email",
         ]);
 
+        // In production the frontend and backend are on different origins.
+        // sameSite must be "none" (with secure:true) so cookies survive the
+        // cross-origin Google redirect.  In dev, "lax" works fine on localhost.
+        const isProduction = process.env.NODE_ENV === "production";
         const cookieOpts = {
             httpOnly: true,
-            secure:   process.env.NODE_ENV === "production",
-            sameSite: "lax",          // must be lax for cross-site redirect to work
+            secure:   isProduction,
+            sameSite: isProduction ? "none" : "lax",
             maxAge:   10 * 60 * 1000, // 10 minutes
         };
 
@@ -628,6 +632,7 @@ export const googleOAuthRedirect = async (req, res) => {
         res.cookie("oauth_state",         state,        cookieOpts);
         res.cookie("oauth_code_verifier", codeVerifier, cookieOpts);
 
+        console.log("Google OAuth: redirecting to Google, state set");
         return res.redirect(url.toString());
     } catch (error) {
         console.error("Google OAuth Redirect Error:", error.message, error.stack);
@@ -666,11 +671,14 @@ export const googleOAuthCallback = async (req, res) => {
         return res.redirect(`${FRONTEND_URL}/login?error=oauth_state_mismatch`);
     }
 
-    // Clear both cookies immediately — single use
+    // Clear both cookies immediately — single use.
+    // MUST exactly match the options used when setting them or the browser
+    // will silently ignore the clear (leaving stale cookies for the next attempt).
+    const isProduction = process.env.NODE_ENV === "production";
     const clearOpts = {
         httpOnly: true,
-        secure:   process.env.NODE_ENV === "production",
-        sameSite: "lax",
+        secure:   isProduction,
+        sameSite: isProduction ? "none" : "lax",
     };
     res.clearCookie("oauth_state",         clearOpts);
     res.clearCookie("oauth_code_verifier", clearOpts);

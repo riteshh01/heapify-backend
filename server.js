@@ -22,17 +22,35 @@ const __dirname = path.dirname(__filename);
 // Swagger setup
 const swaggerDocument = YAML.load(path.join(__dirname, "./swagger.yaml"));
 
-// CORS — includes local dev origins and the production frontend URL from env
+// CORS — includes local dev origins and any production frontend URLs from env.
+// FRONTEND_URL  → single URL (e.g. https://heapify-frontend.vercel.app)
+// FRONTEND_URLS → comma-separated list for multiple origins (preview deployments, custom domains)
+const extraOrigins = [
+  ...(process.env.FRONTEND_URL  ? [process.env.FRONTEND_URL]                       : []),
+  ...(process.env.FRONTEND_URLS ? process.env.FRONTEND_URLS.split(",").map(s => s.trim()) : []),
+];
+
 const allowedOrigins = [
   "http://localhost:5173",
   "http://localhost:3000",
   "http://localhost:3001",
-  ...(process.env.FRONTEND_URL ? [process.env.FRONTEND_URL] : []),
+  ...extraOrigins,
 ];
+
+const corsOptions = {
+  origin(origin, callback) {
+    // Allow requests with no origin (curl, mobile apps, server-to-server)
+    if (!origin) return callback(null, true);
+    if (allowedOrigins.includes(origin)) return callback(null, true);
+    callback(new Error(`CORS: origin '${origin}' is not allowed`));
+  },
+  credentials: true,
+};
 
 app.use(express.json());
 app.use(cookieParser());
-app.use(cors({ origin: allowedOrigins, credentials: true }));
+app.use(cors(corsOptions));
+
 
 // Swagger UI Route
 app.use("/api-docs", swaggerUi.serve, swaggerUi.setup(swaggerDocument));
