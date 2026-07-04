@@ -288,6 +288,68 @@ export const getProblemTags = async (req, res) => {
   }
 };
 
+// GET /api/knowledge/problems/:problemId/note  (requires userAuth)
+// Returns the user's personal note for a problem
+export const getUserNote = async (req, res) => {
+  const { problemId } = req.params;
+
+  if (!problemId || isNaN(problemId)) {
+    return res.status(400).json({ success: false, message: "Invalid problemId" });
+  }
+
+  try {
+    const result = await pool.query(
+      `SELECT user_note
+       FROM dsa_user_problem_status
+       WHERE user_id = $1 AND problem_id = $2`,
+      [req.userId, problemId]
+    );
+
+    const note = result.rows[0]?.user_note ?? "";
+    res.status(200).json({ success: true, note });
+  } catch (error) {
+    console.error("Error fetching user note:", error.message);
+    res.status(500).json({ success: false, message: "Failed to fetch note" });
+  }
+};
+
+// PATCH /api/knowledge/problems/:problemId/note  (requires userAuth + CSRF)
+// Body: { note } — upserts the user's personal note for a problem
+export const saveNote = async (req, res) => {
+  const { problemId } = req.params;
+  const { note } = req.body;
+
+  if (!problemId || isNaN(problemId)) {
+    return res.status(400).json({ success: false, message: "Invalid problemId" });
+  }
+
+  if (typeof note !== "string") {
+    return res.status(400).json({ success: false, message: "Note must be a string" });
+  }
+
+  // Limit note length to 10,000 characters
+  if (note.length > 10000) {
+    return res.status(400).json({ success: false, message: "Note is too long (max 10,000 characters)" });
+  }
+
+  try {
+    await pool.query(
+      `INSERT INTO dsa_user_problem_status (user_id, problem_id, user_note, updated_at)
+       VALUES ($1, $2, $3, NOW())
+       ON CONFLICT (user_id, problem_id)
+       DO UPDATE SET
+         user_note  = EXCLUDED.user_note,
+         updated_at = NOW()`,
+      [req.userId, problemId, note.trim()]
+    );
+
+    res.status(200).json({ success: true, message: "Note saved" });
+  } catch (error) {
+    console.error("Error saving user note:", error.message);
+    res.status(500).json({ success: false, message: "Failed to save note" });
+  }
+};
+
 // POST /api/knowledge/progress/toggle  (requires userAuth)
 // Body: { problemId } — toggles the `completed` flag
 export const toggleProgress = async (req, res) => {
