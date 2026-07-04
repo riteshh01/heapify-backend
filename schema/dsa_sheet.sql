@@ -91,8 +91,13 @@ CREATE TABLE IF NOT EXISTS dsa_user_problem_status (
 
     updated_at          TIMESTAMPTZ DEFAULT NOW(),
 
+    user_note           TEXT DEFAULT '',
+
     UNIQUE(user_id, problem_id)
 );
+
+-- Migration: add user_note column if upgrading from an older schema
+-- ALTER TABLE dsa_user_problem_status ADD COLUMN IF NOT EXISTS user_note TEXT DEFAULT '';
 
 
 CREATE TABLE IF NOT EXISTS tags (
