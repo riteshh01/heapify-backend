@@ -30,7 +30,7 @@ public/uploads/
 *.key
 *.txt
 *.md
-
+*.sql*
 tmp/
 temp/
 

@@ -12,11 +12,21 @@ import {
   toggleProgress,
   getUserNote,
   saveNote,
+  getAllProblems,
+  getCompaniesList,
+  getTagsList,
 } from "../controllers/knowledgeController.js";
 import userAuth from "../middleware/userAuth.js";
 import csrfProtection from "../middleware/csrfProtection.js";
 
 export const knowledgeRouter = express.Router();
+
+// ── Problem Bank (paginated, all 3250 company-seeded problems) ────────────────
+// NOTE: these MUST be declared BEFORE /:patternId so Express doesn't treat
+// "all-problems", "companies", "tags-list" as a patternId value.
+knowledgeRouter.get("/all-problems",  userAuth, getAllProblems);
+knowledgeRouter.get("/companies",     userAuth, getCompaniesList);
+knowledgeRouter.get("/tags-list",     userAuth, getTagsList);
 
 // All routes now require authentication and email verification
 knowledgeRouter.get("/topics",                      userAuth, getTopics);
