@@ -506,11 +506,11 @@ export const getAllProblems = async (req, res) => {
          p.slug            AS problem_slug
          ${solvedSelect},
 
-         -- Aggregated company slugs (for tag display)
+         -- Aggregated companies with logos
          COALESCE(
-           ARRAY_AGG(DISTINCT c.name ORDER BY c.name)
+           JSONB_AGG(DISTINCT jsonb_build_object('name', c.name, 'logo_url', c.logo_url))
            FILTER (WHERE c.name IS NOT NULL),
-           ARRAY[]::TEXT[]
+           '[]'::jsonb
          ) AS companies,
 
          -- Aggregated topic tags
@@ -552,7 +552,7 @@ export const getAllProblems = async (req, res) => {
         problemLink: r.problem_link,
         slug:        r.problem_slug,
         solved:      r.solved,
-        companies:   r.companies,
+        companies:   r.companies.sort((a, b) => a.name.localeCompare(b.name)),
         topics:      r.topics,
       })),
     });
@@ -566,7 +566,7 @@ export const getAllProblems = async (req, res) => {
 export const getCompaniesList = async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT slug, name FROM companies ORDER BY name ASC`
+      `SELECT slug, name, logo_url FROM companies ORDER BY name ASC`
     );
     res.status(200).json({ success: true, companies: result.rows });
   } catch (error) {
