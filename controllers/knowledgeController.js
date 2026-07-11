@@ -269,12 +269,12 @@ export const getProblemTags = async (req, res) => {
 
   try {
     const result = await pool.query(
-      `SELECT t.id, t.name, 'topic' AS tag_type
+      `SELECT t.id, t.name, 'topic' AS tag_type, NULL AS logo_url
        FROM topics t
        JOIN problem_topic_stats pt ON pt.tag_id = t.id
        WHERE pt.problem_id = $1
        UNION ALL
-       SELECT c.id, c.name, 'company' AS tag_type
+       SELECT c.id, c.name, 'company' AS tag_type, c.logo_url
        FROM companies c
        JOIN problem_company_stats pcs ON pcs.company_id = c.id
        WHERE pcs.problem_id = $1
