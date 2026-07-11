@@ -269,11 +269,16 @@ export const getProblemTags = async (req, res) => {
 
   try {
     const result = await pool.query(
-      `SELECT t.id, t.name, t.tag_type
-       FROM tags t
-       JOIN problem_tags pt ON pt.tag_id = t.id
+      `SELECT t.id, t.name, 'topic' AS tag_type
+       FROM topics t
+       JOIN problem_topic_stats pt ON pt.tag_id = t.id
        WHERE pt.problem_id = $1
-       ORDER BY t.tag_type ASC, t.name ASC`,
+       UNION ALL
+       SELECT c.id, c.name, 'company' AS tag_type
+       FROM companies c
+       JOIN problem_company_stats pcs ON pcs.company_id = c.id
+       WHERE pcs.problem_id = $1
+       ORDER BY tag_type ASC, name ASC`,
       [problemId]
     );
 
@@ -450,8 +455,8 @@ export const getAllProblems = async (req, res) => {
       params.push(tag.toLowerCase());
       conditions.push(`
         EXISTS (
-          SELECT 1 FROM problem_tags pt
-          JOIN tags tg ON tg.id = pt.tag_id
+          SELECT 1 FROM problem_topic_stats pt
+          JOIN topics tg ON tg.id = pt.tag_id
           WHERE pt.problem_id = p.id AND tg.slug = $${params.length}
         )
       `);
@@ -528,8 +533,8 @@ export const getAllProblems = async (req, res) => {
        LEFT JOIN companies c ON c.id = pcs.company_id
 
        -- Topic tag join
-       LEFT JOIN problem_tags ptg ON ptg.problem_id = p.id
-       LEFT JOIN tags tg ON tg.id = ptg.tag_id
+       LEFT JOIN problem_topic_stats ptg ON ptg.problem_id = p.id
+       LEFT JOIN topics tg ON tg.id = ptg.tag_id
 
        ${whereClause}
 
@@ -579,7 +584,7 @@ export const getCompaniesList = async (req, res) => {
 export const getTagsList = async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT slug, name FROM tags WHERE slug IS NOT NULL ORDER BY name ASC`
+      `SELECT slug, name FROM topics WHERE slug IS NOT NULL ORDER BY name ASC`
     );
     res.status(200).json({ success: true, tags: result.rows });
   } catch (error) {
