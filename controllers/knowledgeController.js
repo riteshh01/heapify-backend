@@ -388,3 +388,202 @@ export const toggleProgress = async (req, res) => {
     res.status(500).json({ success: false, message: "Failed to update progress" });
   }
 };
+
+// ─────────────────────────────────────────────────────────────────────────────
+// NEW: Problem Bank  (company-seeded 3 250 problems, not DSA-Sheet problems)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * GET /api/knowledge/all-problems
+ * Query params:
+ *   page       (default 1)
+ *   limit      (default 15, max 50)
+ *   difficulty (easy | medium | hard)
+ *   company    company slug  e.g. "google"
+ *   tag        tag slug      e.g. "dynamic-programming"
+ *   search     partial title match
+ *   status     solved | unsolved   (requires auth — silently ignored if no user)
+ */
+export const getAllProblems = async (req, res) => {
+  try {
+    const page      = Math.max(1, parseInt(req.query.page  || "1",  10));
+    const limit     = Math.min(50, Math.max(1, parseInt(req.query.limit || "15", 10)));
+    const offset    = (page - 1) * limit;
+
+    const difficulty = req.query.difficulty || "";
+    const company    = req.query.company    || "";
+    const tag        = req.query.tag        || "";
+    const search     = req.query.search     || "";
+    const status     = req.query.status     || "";  // solved | unsolved
+    const userId     = req.userId || null;
+
+    // ── Build a CTE for clean, composable filtering ─────────────────────────
+    const conditions = [
+      // Only problems in the company bank (source = company_repo OR those with company stats)
+      // Exclude DSA-sheet-only problems (pattern_id IS NOT NULL means it's curated DSA sheet)
+      `p.pattern_id IS NULL`,
+    ];
+    const params = [];
+
+    if (difficulty) {
+      params.push(difficulty.toLowerCase());
+      conditions.push(`p.difficulty = $${params.length}`);
+    }
+
+    if (search) {
+      params.push(`%${search.trim()}%`);
+      conditions.push(`p.title ILIKE $${params.length}`);
+    }
+
+    if (company) {
+      params.push(company.toLowerCase());
+      conditions.push(`
+        EXISTS (
+          SELECT 1 FROM problem_company_stats pcs
+          JOIN companies c ON c.id = pcs.company_id
+          WHERE pcs.problem_id = p.id AND c.slug = $${params.length}
+        )
+      `);
+    }
+
+    if (tag) {
+      params.push(tag.toLowerCase());
+      conditions.push(`
+        EXISTS (
+          SELECT 1 FROM problem_tags pt
+          JOIN tags tg ON tg.id = pt.tag_id
+          WHERE pt.problem_id = p.id AND tg.slug = $${params.length}
+        )
+      `);
+    }
+
+    // Status filter — requires a logged-in user
+    if (userId && status === "solved") {
+      params.push(userId);
+      conditions.push(`
+        EXISTS (
+          SELECT 1 FROM dsa_user_problem_status ups
+          WHERE ups.problem_id = p.id AND ups.user_id = $${params.length} AND ups.completed = TRUE
+        )
+      `);
+    } else if (userId && status === "unsolved") {
+      params.push(userId);
+      conditions.push(`
+        NOT EXISTS (
+          SELECT 1 FROM dsa_user_problem_status ups
+          WHERE ups.problem_id = p.id AND ups.user_id = $${params.length} AND ups.completed = TRUE
+        )
+      `);
+    }
+
+    const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+
+    // ── Count query ──────────────────────────────────────────────────────────
+    const countResult = await pool.query(
+      `SELECT COUNT(*) FROM dsa_problems p ${whereClause}`,
+      params
+    );
+    const total = parseInt(countResult.rows[0].count, 10);
+
+    // ── Data query — embed company + topic tags via aggregation ─────────────
+    params.push(limit);
+    const limitPlaceholder  = `$${params.length}`;
+    params.push(offset);
+    const offsetPlaceholder = `$${params.length}`;
+
+    // solved flag for the requesting user (NULL if not logged in)
+    const solvedJoin = userId
+      ? `LEFT JOIN dsa_user_problem_status ups ON ups.problem_id = p.id AND ups.user_id = ${userId}`
+      : "";
+    const solvedSelect = userId ? `, COALESCE(ups.completed, FALSE) AS solved` : `, FALSE AS solved`;
+
+    const dataResult = await pool.query(
+      `SELECT
+         p.id,
+         p.title,
+         p.difficulty,
+         p.problem_link,
+         p.slug            AS problem_slug
+         ${solvedSelect},
+
+         -- Aggregated companies with logos
+         COALESCE(
+           JSONB_AGG(DISTINCT jsonb_build_object('name', c.name, 'logo_url', c.logo_url))
+           FILTER (WHERE c.name IS NOT NULL),
+           '[]'::jsonb
+         ) AS companies,
+
+         -- Aggregated topic tags
+         COALESCE(
+           ARRAY_AGG(DISTINCT tg.name ORDER BY tg.name)
+           FILTER (WHERE tg.name IS NOT NULL),
+           ARRAY[]::TEXT[]
+         ) AS topics
+
+       FROM dsa_problems p
+       ${solvedJoin}
+
+       -- Company join
+       LEFT JOIN problem_company_stats pcs ON pcs.problem_id = p.id
+       LEFT JOIN companies c ON c.id = pcs.company_id
+
+       -- Topic tag join
+       LEFT JOIN problem_tags ptg ON ptg.problem_id = p.id
+       LEFT JOIN tags tg ON tg.id = ptg.tag_id
+
+       ${whereClause}
+
+       GROUP BY p.id ${userId ? ", ups.completed" : ""}
+       ORDER BY p.title ASC
+       LIMIT ${limitPlaceholder} OFFSET ${offsetPlaceholder}`,
+      params
+    );
+
+    res.status(200).json({
+      success: true,
+      total,
+      page,
+      limit,
+      hasMore: offset + limit < total,
+      problems: dataResult.rows.map((r) => ({
+        id:          r.id,
+        title:       r.title,
+        difficulty:  r.difficulty,
+        problemLink: r.problem_link,
+        slug:        r.problem_slug,
+        solved:      r.solved,
+        companies:   r.companies.sort((a, b) => a.name.localeCompare(b.name)),
+        topics:      r.topics,
+      })),
+    });
+  } catch (error) {
+    console.error("Error fetching all problems:", error.message);
+    res.status(500).json({ success: false, message: "Failed to fetch problems" });
+  }
+};
+
+/** GET /api/knowledge/companies — returns all companies for the filter dropdown */
+export const getCompaniesList = async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT slug, name, logo_url FROM companies ORDER BY name ASC`
+    );
+    res.status(200).json({ success: true, companies: result.rows });
+  } catch (error) {
+    console.error("Error fetching companies:", error.message);
+    res.status(500).json({ success: false, message: "Failed to fetch companies" });
+  }
+};
+
+/** GET /api/knowledge/tags-list — returns all tags for the topic filter dropdown */
+export const getTagsList = async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT slug, name FROM tags WHERE slug IS NOT NULL ORDER BY name ASC`
+    );
+    res.status(200).json({ success: true, tags: result.rows });
+  } catch (error) {
+    console.error("Error fetching tags list:", error.message);
+    res.status(500).json({ success: false, message: "Failed to fetch tags" });
+  }
+};
