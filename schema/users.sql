@@ -35,8 +35,9 @@ CREATE TABLE IF NOT EXISTS users (
     -- ──────────────────────────────────────────────────────────────────────
 
     -- Profile
-    avatar                  TEXT            DEFAULT '',   -- user-uploaded avatar
-    picture                 TEXT            DEFAULT '',   -- Google profile picture URL
+    avatar                  TEXT            DEFAULT '',   -- user-uploaded avatar (deprecated, use avatar_url)
+    avatar_url              TEXT            DEFAULT '',   -- Profile picture URL (Cloudinary or Google)
+    avatar_public_id        TEXT,                         -- Cloudinary public ID for deletion
     google_id               VARCHAR(255)    UNIQUE,       -- NULL for local users
 
     -- Role-Based Access
@@ -92,8 +93,9 @@ CREATE INDEX IF NOT EXISTS idx_users_email ON users (email);
 ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar   TEXT DEFAULT '';
 -- [APPLIED 2026-06-16] google_id for OAuth — stores Google's unique "sub" identifier
 ALTER TABLE users ADD COLUMN IF NOT EXISTS google_id VARCHAR(255) UNIQUE;
--- [APPLIED 2026-06-16] picture column for Google profile picture URL
-ALTER TABLE users ADD COLUMN IF NOT EXISTS picture  TEXT DEFAULT '';
+-- [APPLIED 2026-06-16] avatar_url (formerly picture) and avatar_public_id
+ALTER TABLE users RENAME COLUMN picture TO avatar_url;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_public_id TEXT;
 
 -- ─── Migration: password enforcement constraint (APPLIED 2026-06-17) ─────────
 -- Step 1: Drop column-level NOT NULL — the CHECK constraint becomes the authority.
