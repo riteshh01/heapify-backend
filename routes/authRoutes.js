@@ -49,16 +49,7 @@ authRouter.post("/reset-password",     otpLimiter,      resetPassword);
 authRouter.get("/me",                  userAuth,                          getMe);
 
 // Profile Image Upload/Delete
-const handleUpload = (req, res, next) => {
-    upload.single("image")(req, res, (err) => {
-        if (err) {
-            return res.status(400).json({ success: false, message: err.message });
-        }
-        next();
-    });
-};
-
-authRouter.post("/avatar",             userAuth, handleUpload,            uploadAvatar);
+authRouter.post("/avatar",             userAuth, upload.single("image"),  uploadAvatar);
 authRouter.delete("/avatar",           userAuth,                          deleteAvatar);
 
 // Legacy is-auth (kept for backwards-compat)

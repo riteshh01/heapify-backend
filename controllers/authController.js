@@ -822,6 +822,7 @@ export const googleOAuthCallback = async (req, res) => {
     }
 };
 
+
 export const uploadAvatar = async (req, res) => {
     try {
         if (!req.file) {
@@ -846,6 +847,8 @@ export const uploadAvatar = async (req, res) => {
         }
 
         // Upload new image from buffer
+        // Since cloudinary doesn't support direct buffer upload via promise easily without stream,
+        // we wrap it in a Promise
         const uploadResponse = await new Promise((resolve, reject) => {
             const stream = cloudinary.uploader.upload_stream(
                 { folder: "heapify_avatars" },
