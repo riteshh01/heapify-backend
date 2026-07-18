@@ -13,8 +13,11 @@ import {
     resendVerifyOtp,
     googleOAuthRedirect,
     googleOAuthCallback,
+    uploadAvatar,
+    deleteAvatar,
 } from "../controllers/authController.js";
 import userAuth from "../middleware/userAuth.js";
+import upload from "../middleware/upload.js";
 import { loginLimiter, otpLimiter, registerLimiter } from "../middleware/rateLimit.js";
 import csrfProtection from "../middleware/csrfProtection.js";
 
@@ -44,6 +47,19 @@ authRouter.post("/reset-password",     otpLimiter,      resetPassword);
 
 // Current user profile — GET is a safe method, no CSRF needed
 authRouter.get("/me",                  userAuth,                          getMe);
+
+// Profile Image Upload/Delete
+const handleUpload = (req, res, next) => {
+    upload.single("image")(req, res, (err) => {
+        if (err) {
+            return res.status(400).json({ success: false, message: err.message });
+        }
+        next();
+    });
+};
+
+authRouter.post("/avatar",             userAuth, handleUpload,            uploadAvatar);
+authRouter.delete("/avatar",           userAuth,                          deleteAvatar);
 
 // Legacy is-auth (kept for backwards-compat)
 // POST is a state-changing method — CSRF protection applied

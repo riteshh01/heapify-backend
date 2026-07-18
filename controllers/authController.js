@@ -13,6 +13,7 @@ import {
 } from "../utils/tokenService.js";
 import { generateState, generateCodeVerifier } from "arctic";
 import google from "../config/oauth.js";
+import cloudinary from "../config/cloudinary.js";
 
 export const register = async (req, res) => {
     const { name, email, password } = req.body;
@@ -271,7 +272,7 @@ export const refresh = async (req, res) => {
 export const getMe = async (req, res) => {
     try {
         const result = await pool.query(
-            `SELECT id, name, email, avatar, role, created_at
+            `SELECT id, name, email, avatar_url, role, created_at
              FROM users
              WHERE id = $1`,
             [req.userId]
@@ -711,9 +712,8 @@ export const googleOAuthCallback = async (req, res) => {
         const googleName      = googleUser.name    || normalizedEmail.split("@")[0];
 
         // ── 4. Upsert user in DB ─────────────────────────────────────────────
-        // Live DB columns: auth_method (not auth_provider), picture (Google pic)
         // Strategy:
-        //   a) Find by google_id  → returning Google user, refresh name/picture
+        //   a) Find by google_id  → returning Google user
         //   b) Find by email      → existing local user, link Google account
         //   c) Neither            → create brand-new OAuth user
 
@@ -721,26 +721,42 @@ export const googleOAuthCallback = async (req, res) => {
 
         // a) Look up by google_id first
         const byGoogleId = await pool.query(
-            `SELECT id, name, email FROM users WHERE google_id = $1`,
+            `SELECT id, name, email, avatar_url, avatar_public_id FROM users WHERE google_id = $1`,
             [googleUser.id]
         );
 
         if (byGoogleId.rows.length > 0) {
-            // Returning Google user — refresh name and picture
+            // Returning Google user — refresh name
             const updated = await pool.query(
                 `UPDATE users
-                 SET name    = $1,
-                     picture = $2
-                 WHERE google_id = $3
+                 SET name = $1
+                 WHERE google_id = $2
                  RETURNING id, name, email`,
-                [googleName, googlePicture, googleUser.id]
+                [googleName, googleUser.id]
             );
             user = updated.rows[0];
 
         } else {
+            // Check if we need to upload googlePicture to Cloudinary for new/linked users
+            let uploadedAvatarUrl = "";
+            let uploadedAvatarPublicId = null;
+
+            if (googlePicture) {
+                try {
+                    const uploadResponse = await cloudinary.uploader.upload(googlePicture, {
+                        folder: "heapify_avatars",
+                    });
+                    uploadedAvatarUrl = uploadResponse.secure_url;
+                    uploadedAvatarPublicId = uploadResponse.public_id;
+                } catch (err) {
+                    console.error("Cloudinary upload error during Google OAuth:", err);
+                    uploadedAvatarUrl = googlePicture; // fallback to raw google URL
+                }
+            }
+
             // b) Check if the email already belongs to a local account
             const byEmail = await pool.query(
-                `SELECT id, name, email FROM users WHERE email = $1`,
+                `SELECT id, name, email, avatar_url FROM users WHERE email = $1`,
                 [normalizedEmail]
             );
 
@@ -749,12 +765,13 @@ export const googleOAuthCallback = async (req, res) => {
                 const merged = await pool.query(
                     `UPDATE users
                      SET google_id            = $1,
-                         picture              = CASE WHEN picture = '' OR picture IS NULL THEN $2 ELSE picture END,
+                         avatar_url           = CASE WHEN avatar_url = '' OR avatar_url IS NULL THEN $2 ELSE avatar_url END,
+                         avatar_public_id     = CASE WHEN avatar_public_id IS NULL THEN $3 ELSE avatar_public_id END,
                          auth_method          = 'google',
                          is_account_verified  = TRUE
-                     WHERE email = $3
+                     WHERE email = $4
                      RETURNING id, name, email`,
-                    [googleUser.id, googlePicture, normalizedEmail]
+                    [googleUser.id, uploadedAvatarUrl, uploadedAvatarPublicId, normalizedEmail]
                 );
                 user = merged.rows[0];
 
@@ -762,10 +779,10 @@ export const googleOAuthCallback = async (req, res) => {
                 // c) Create brand-new OAuth user (no password)
                 const created = await pool.query(
                     `INSERT INTO users
-                         (name, email, password, google_id, picture, auth_method, is_account_verified)
-                     VALUES ($1, $2, NULL, $3, $4, 'google', TRUE)
+                         (name, email, password, google_id, avatar_url, avatar_public_id, auth_method, is_account_verified)
+                     VALUES ($1, $2, NULL, $3, $4, $5, 'google', TRUE)
                      RETURNING id, name, email`,
-                    [googleName, normalizedEmail, googleUser.id, googlePicture]
+                    [googleName, normalizedEmail, googleUser.id, uploadedAvatarUrl, uploadedAvatarPublicId]
                 );
                 user = created.rows[0];
             }
@@ -802,6 +819,94 @@ export const googleOAuthCallback = async (req, res) => {
     } catch (error) {
         console.error("Google OAuth Callback Error:", error.message, error.stack);
         return res.redirect(`${FRONTEND_URL}/login?error=oauth_failed`);
+    }
+};
+
+export const uploadAvatar = async (req, res) => {
+    try {
+        if (!req.file) {
+            return res.status(400).json({ success: false, message: "No image provided" });
+        }
+
+        const userId = req.userId;
+        
+        // Fetch current avatar to delete from Cloudinary if it exists
+        const userQuery = await pool.query(
+            "SELECT avatar_public_id FROM users WHERE id = $1",
+            [userId]
+        );
+        const oldPublicId = userQuery.rows[0]?.avatar_public_id;
+
+        if (oldPublicId) {
+            try {
+                await cloudinary.uploader.destroy(oldPublicId);
+            } catch (err) {
+                console.error("Failed to delete old avatar from Cloudinary", err);
+            }
+        }
+
+        // Upload new image from buffer
+        const uploadResponse = await new Promise((resolve, reject) => {
+            const stream = cloudinary.uploader.upload_stream(
+                { folder: "heapify_avatars" },
+                (error, result) => {
+                    if (error) return reject(error);
+                    resolve(result);
+                }
+            );
+            stream.end(req.file.buffer);
+        });
+
+        const avatarUrl = uploadResponse.secure_url;
+        const avatarPublicId = uploadResponse.public_id;
+
+        await pool.query(
+            "UPDATE users SET avatar_url = $1, avatar_public_id = $2 WHERE id = $3",
+            [avatarUrl, avatarPublicId, userId]
+        );
+
+        res.json({
+            success: true,
+            message: "Avatar uploaded successfully",
+            avatarUrl,
+        });
+
+    } catch (error) {
+        console.error("Upload Avatar Error:", error.message);
+        res.status(500).json({ success: false, message: "Failed to upload avatar", error: error.message, stack: error.stack });
+    }
+};
+
+export const deleteAvatar = async (req, res) => {
+    try {
+        const userId = req.userId;
+        
+        const userQuery = await pool.query(
+            "SELECT avatar_public_id FROM users WHERE id = $1",
+            [userId]
+        );
+        const publicId = userQuery.rows[0]?.avatar_public_id;
+
+        if (publicId) {
+            try {
+                await cloudinary.uploader.destroy(publicId);
+            } catch (err) {
+                console.error("Failed to delete avatar from Cloudinary", err);
+            }
+        }
+
+        await pool.query(
+            "UPDATE users SET avatar_url = '', avatar_public_id = NULL WHERE id = $1",
+            [userId]
+        );
+
+        res.json({
+            success: true,
+            message: "Avatar deleted successfully",
+        });
+    } catch (error) {
+        console.error("Delete Avatar Error:", error.message);
+        res.status(500).json({ success: false, message: "Failed to delete avatar" });
     }
 };
 
