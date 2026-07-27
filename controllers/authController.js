@@ -913,3 +913,32 @@ export const deleteAvatar = async (req, res) => {
     }
 };
 
+
+export const updateProfile = async (req, res) => {
+    try {
+        const userId = req.userId;
+        const { name } = req.body;
+
+        if (!name || typeof name !== "string" || name.trim().length === 0) {
+            return res.status(400).json({ success: false, message: "Valid name is required" });
+        }
+
+        const result = await pool.query(
+            "UPDATE users SET name = $1 WHERE id = $2 RETURNING id, name, email, avatar_url, role, created_at",
+            [name.trim(), userId]
+        );
+
+        if (result.rowCount === 0) {
+            return res.status(404).json({ success: false, message: "User not found" });
+        }
+
+        res.json({
+            success: true,
+            message: "Profile updated successfully",
+            user: result.rows[0],
+        });
+    } catch (error) {
+        console.error("Update Profile Error:", error.message);
+        res.status(500).json({ success: false, message: "Failed to update profile" });
+    }
+};

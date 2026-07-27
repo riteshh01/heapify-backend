@@ -15,6 +15,7 @@ import {
     googleOAuthCallback,
     uploadAvatar,
     deleteAvatar,
+    updateProfile,
 } from "../controllers/authController.js";
 import userAuth from "../middleware/userAuth.js";
 import upload from "../middleware/upload.js";
@@ -51,6 +52,9 @@ authRouter.get("/me",                  userAuth,                          getMe)
 // Profile Image Upload/Delete
 authRouter.post("/avatar",             userAuth, upload.single("image"),  uploadAvatar);
 authRouter.delete("/avatar",           userAuth,                          deleteAvatar);
+
+// Profile Update
+authRouter.put("/profile",             userAuth,                          updateProfile);
 
 // Legacy is-auth (kept for backwards-compat)
 // POST is a state-changing method — CSRF protection applied

@@ -62,7 +62,7 @@ export const getTopicData = async (req, res) => {
        LEFT JOIN dsa_patterns pa ON pa.topic_id = t.id
        LEFT JOIN dsa_problems pr ON pr.pattern_id = pa.id
        WHERE t.id = $1
-       ORDER BY pa.id ASC, pr.id ASC`,
+       ORDER BY pa.id ASC, pr.pattern_order ASC, pr.id ASC`,
       [topicId]
     );
 
@@ -158,7 +158,7 @@ export const getProblems = async (req, res) => {
               problem_link, youtube_link, article_link, notes, created_at
        FROM dsa_problems
        WHERE pattern_id = $1
-       ORDER BY id ASC`,
+       ORDER BY pattern_order ASC, id ASC`,
       [patternId]
     );
 
@@ -269,12 +269,12 @@ export const getProblemTags = async (req, res) => {
 
   try {
     const result = await pool.query(
-      `SELECT t.id, t.name, 'topic' AS tag_type, NULL AS logo_url
+      `SELECT DISTINCT t.id, t.name, 'topic' AS tag_type, NULL AS logo_url
        FROM topics t
        JOIN problem_topic_stats pt ON pt.tag_id = t.id
        WHERE pt.problem_id = $1
        UNION ALL
-       SELECT c.id, c.name, 'company' AS tag_type, c.logo_url
+       SELECT DISTINCT c.id, c.name, 'company' AS tag_type, c.logo_url
        FROM companies c
        JOIN problem_company_stats pcs ON pcs.company_id = c.id
        WHERE pcs.problem_id = $1
@@ -423,11 +423,7 @@ export const getAllProblems = async (req, res) => {
     const userId     = req.userId || null;
 
     // ── Build a CTE for clean, composable filtering ─────────────────────────
-    const conditions = [
-      // Only problems in the company bank (source = company_repo OR those with company stats)
-      // Exclude DSA-sheet-only problems (pattern_id IS NOT NULL means it's curated DSA sheet)
-      `p.pattern_id IS NULL`,
-    ];
+    const conditions = [];
     const params = [];
 
     if (difficulty) {
