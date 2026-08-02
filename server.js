@@ -11,6 +11,7 @@ import { authRouter } from "./routes/authRoutes.js";
 import { userRouter } from "./routes/userRoutes.js";
 import { knowledgeRouter } from "./routes/knowledgeRoutes.js";
 import { theoryRouter } from "./routes/theoryRoutes.js";
+import { startKeepAlive } from "./utils/keepAlive.js";
 
 const app = express();
 const PORT = process.env.PORT || 4000;
@@ -55,6 +56,19 @@ app.use(cors(corsOptions));
 // Swagger UI Route
 app.use("/api-docs", swaggerUi.serve, swaggerUi.setup(swaggerDocument));
 
+// Health Check Endpoints (to verify API status & prevent sleep state)
+const healthHandler = (req, res) => {
+  res.status(200).json({
+    status: "ok",
+    message: "Heapify API is active and healthy",
+    timestamp: new Date().toISOString(),
+    uptime: process.uptime(),
+  });
+};
+
+app.get("/health", healthHandler);
+app.get("/api/health", healthHandler);
+
 // API Endpoints
 app.get("/", (req, res) => res.send("Heapify API is running!"));
 app.use("/api/auth", authRouter);
@@ -62,13 +76,14 @@ app.use("/api/user", userRouter);
 app.use("/api/knowledge", knowledgeRouter);
 app.use("/api/theory", theoryRouter);
 
-// Start server only in local dev (not in Vercel serverless environment)
-if (process.env.NODE_ENV !== "production") {
-  app.listen(PORT, () =>
+// Start server unless running in Vercel serverless environment
+if (!process.env.VERCEL) {
+  app.listen(PORT, () => {
     console.log(
       `Server started on PORT: ${PORT}\nSwagger docs available at http://localhost:${PORT}/api-docs`
-    )
-  );
+    );
+    startKeepAlive(PORT);
+  });
 }
 
 export default app;
