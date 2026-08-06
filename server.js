@@ -27,8 +27,8 @@ const swaggerDocument = YAML.load(path.join(__dirname, "./swagger.yaml"));
 // FRONTEND_URL  → single URL (e.g. https://heapify-frontend.vercel.app)
 // FRONTEND_URLS → comma-separated list for multiple origins (preview deployments, custom domains)
 const extraOrigins = [
-  ...(process.env.FRONTEND_URL  ? [process.env.FRONTEND_URL]                       : []),
-  ...(process.env.FRONTEND_URLS ? process.env.FRONTEND_URLS.split(",").map(s => s.trim()) : []),
+  ...(process.env.FRONTEND_URL  ? [process.env.FRONTEND_URL.replace(/\/+$/, "")] : []),
+  ...(process.env.FRONTEND_URLS ? process.env.FRONTEND_URLS.split(",").map(s => s.trim().replace(/\/+$/, "")) : []),
 ];
 
 const allowedOrigins = [
@@ -42,7 +42,10 @@ const corsOptions = {
   origin(origin, callback) {
     // Allow requests with no origin (curl, mobile apps, server-to-server)
     if (!origin) return callback(null, true);
-    if (allowedOrigins.includes(origin)) return callback(null, true);
+    const cleanOrigin = origin.replace(/\/+$/, "");
+    if (allowedOrigins.includes(cleanOrigin) || cleanOrigin.endsWith(".vercel.app")) {
+      return callback(null, true);
+    }
     callback(new Error(`CORS: origin '${origin}' is not allowed`));
   },
   credentials: true,
@@ -76,9 +79,10 @@ app.use("/api/user", userRouter);
 app.use("/api/knowledge", knowledgeRouter);
 app.use("/api/theory", theoryRouter);
 
-// Start server unless running in Vercel serverless environment
-if (!process.env.VERCEL) {
-  app.listen(PORT, () => {
+// Start server when run directly (e.g. node server.js on Render/local) or outside Vercel serverless
+const isDirectRun = Boolean(process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]);
+if (!process.env.VERCEL || isDirectRun) {
+  app.listen(PORT, "0.0.0.0", () => {
     console.log(
       `Server started on PORT: ${PORT}\nSwagger docs available at http://localhost:${PORT}/api-docs`
     );

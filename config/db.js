@@ -1,11 +1,16 @@
 import pkg from "pg"; // pg package is a library for node.js
 const { Pool } = pkg; // isme se mai Pool extract kr raha hu 
 
+let connectionString = process.env.DATABASE_URL;
+if (connectionString && connectionString.includes("sslmode=require")) {
+  connectionString = connectionString.replace("sslmode=require", "sslmode=verify-full");
+}
+
 const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
+  connectionString,
   ssl: {
     // Neon jaisi cloud DB services secure SSL use karti hain.
-    rejectUnauthorized: true, // SSL certificate strictly verify mat karo 
+    rejectUnauthorized: false,
   },
 });
 
