@@ -584,15 +584,19 @@ export const getAllProblems = async (req, res) => {
     );
     const total = parseInt(countResult.rows[0].count, 10);
 
+    let solvedJoin = "";
+    let solvedSelect = ", FALSE AS solved";
+
+    if (userId) {
+      params.push(userId);
+      solvedJoin = `LEFT JOIN dsa_user_problem_status ups ON ups.problem_id = p.id AND ups.user_id = $${params.length}`;
+      solvedSelect = `, COALESCE(ups.completed, FALSE) AS solved`;
+    }
+
     params.push(limit);
     const limitPlaceholder  = `$${params.length}`;
     params.push(offset);
     const offsetPlaceholder = `$${params.length}`;
-
-    const solvedJoin = userId
-      ? `LEFT JOIN dsa_user_problem_status ups ON ups.problem_id = p.id AND ups.user_id = ${userId}`
-      : "";
-    const solvedSelect = userId ? `, COALESCE(ups.completed, FALSE) AS solved` : `, FALSE AS solved`;
 
     const dataResult = await pool.query(
       `SELECT
