@@ -13,8 +13,10 @@ import userAuth from "../middleware/userAuth.js";
 
 export const theoryRouter = express.Router();
 
-// Debug — no auth (remove after confirming DB is seeded correctly)
-theoryRouter.get("/debug", debugTheory);
+// Debug route — only accessible in non-production environments
+if (process.env.NODE_ENV !== "production") {
+  theoryRouter.get("/debug", debugTheory);
+}
 
 // All other routes require authentication
 theoryRouter.get("/subjects",                                   userAuth, getSubjects);

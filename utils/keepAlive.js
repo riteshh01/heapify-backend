@@ -5,9 +5,9 @@
 
 const FIVE_MINUTES_MS = 5 * 60 * 1000;
 
-export function startKeepAlive(port = process.env.PORT || 4000) {
+export function startKeepAlive() {
   // Determine target URL for self-pinging
-  const baseUrl = process.env.BACKEND_URL || process.env.SERVER_URL || `http://localhost:${port}`;
+  const baseUrl = process.env.BACKEND_URL;
   const healthUrl = baseUrl.endsWith('/health') ? baseUrl : `${baseUrl.replace(/\/+$/, '')}/health`;
 
   console.log(`[Keep-Alive] Starting self-ping service targeting: ${healthUrl} (every 5 minutes)`);
